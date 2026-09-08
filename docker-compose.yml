@@ -1,0 +1,307 @@
+# SmartStock — infrastructure de développement local.
+#
+# Respecte le système déjà en place dans les autres projets du homelab :
+# un dossier = un projet Compose isolé, donc Docker préfixe automatiquement
+# les réseaux/volumes avec "smartstock_" (voir `docker network ls`) et
+# aucun conflit n'est possible avec myportfolio_* / azwebsite_* / homelab_*,
+# même si les noms de services (db, backend...) sont réutilisés d'un projet
+# à l'autre.
+#
+# Réseau par défaut unique pour le dev (comme MyPortfolio/docker-compose.yml)
+# — le split internal/edge + TLS + publication Tailscale n'arrive qu'en
+# prod (docker-compose.prod.yml, à écrire plus tard). Aucun port n'est
+# jamais publié sur 0.0.0.0 : seulement 127.0.0.1, jamais accessible
+# depuis le LAN.
+
+x-spring-service: &spring-service
+  build:
+    context: .
+    dockerfile: Dockerfile
+  restart: unless-stopped
+  environment: &spring-env
+    KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    SPRING_PROFILES_ACTIVE: docker
+  depends_on:
+    kafka:
+      condition: service_healthy
+
+services:
+  # ---------------------------------------------------------------------
+  # Bases de données — une par microservice (Database-per-Service).
+  # Publiées uniquement sur 127.0.0.1 pour permettre l'inspection locale
+  # (DBeaver/psql) pendant le dev, jamais sur 0.0.0.0. Ports choisis pour
+  # ne pas entrer en collision avec le Postgres global du homelab (5432)
+  # ni avec ceux de MyPortfolio/azwebsite.
+  # ---------------------------------------------------------------------
+  auth-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${AUTH_DB_NAME:-auth}
+      POSTGRES_USER: ${AUTH_DB_USER:-auth}
+      POSTGRES_PASSWORD: ${AUTH_DB_PASSWORD:-change-me}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - auth_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${AUTH_DB_USER:-auth}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  inventory-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${INVENTORY_DB_NAME:-inventory}
+      POSTGRES_USER: ${INVENTORY_DB_USER:-inventory}
+      POSTGRES_PASSWORD: ${INVENTORY_DB_PASSWORD:-change-me}
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - inventory_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${INVENTORY_DB_USER:-inventory}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  order-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${ORDER_DB_NAME:-orders}
+      POSTGRES_USER: ${ORDER_DB_USER:-orders}
+      POSTGRES_PASSWORD: ${ORDER_DB_PASSWORD:-change-me}
+    ports:
+      - "127.0.0.1:5435:5432"
+    volumes:
+      - order_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ORDER_DB_USER:-orders}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  billing-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${BILLING_DB_NAME:-billing}
+      POSTGRES_USER: ${BILLING_DB_USER:-billing}
+      POSTGRES_PASSWORD: ${BILLING_DB_PASSWORD:-change-me}
+    ports:
+      - "127.0.0.1:5436:5432"
+    volumes:
+      - billing_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${BILLING_DB_USER:-billing}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  notification-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${NOTIFICATION_DB_NAME:-notification}
+      POSTGRES_USER: ${NOTIFICATION_DB_USER:-notification}
+      POSTGRES_PASSWORD: ${NOTIFICATION_DB_PASSWORD:-change-me}
+    ports:
+      - "127.0.0.1:5437:5432"
+    volumes:
+      - notification_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${NOTIFICATION_DB_USER:-notification}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ---------------------------------------------------------------------
+  # Kafka en mode KRaft (pas de Zookeeper — déprécié depuis Kafka 4.x,
+  # inutile pour un cluster à un seul nœud). Jamais publié sur l'hôte :
+  # seuls les conteneurs du réseau par défaut de ce projet y accèdent via
+  # "kafka:9092". Un outil de debug (kafka-ui) pourra être ajouté plus
+  # tard si besoin d'inspection locale.
+  # ---------------------------------------------------------------------
+  kafka:
+    image: apache/kafka:3.8.0
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 3
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # ---------------------------------------------------------------------
+  # Microservices Spring Boot. Chaque `build.context` pointe vers son
+  # propre dossier (créé au fur et à mesure qu'on implémente chaque
+  # service) — ce fichier sert de plan d'infrastructure complet dès
+  # maintenant, il deviendra "up-able" service par service.
+  # ---------------------------------------------------------------------
+  auth-service:
+    <<: *spring-service
+    build:
+      context: ./services/auth-service
+    depends_on:
+      auth-db:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    secrets:
+      - jwt_private_key
+      - jwt_public_key
+    environment:
+      <<: *spring-env
+      DB_HOST: auth-db
+      DB_PORT: 5432
+      DB_NAME: ${AUTH_DB_NAME:-auth}
+      DB_USER: ${AUTH_DB_USER:-auth}
+      DB_PASSWORD: ${AUTH_DB_PASSWORD:-change-me}
+      JWT_PRIVATE_KEY_PATH: file:/run/secrets/jwt_private_key
+      JWT_PUBLIC_KEY_PATH: file:/run/secrets/jwt_public_key
+      JWT_ISSUER: ${JWT_ISSUER:-smartstock-auth}
+      JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS:-3600000}
+      JWT_REFRESH_EXPIRATION_MS: ${JWT_REFRESH_EXPIRATION_MS:-2592000000}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@smartstock.local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:4200}
+
+  inventory-service:
+    <<: *spring-service
+    build:
+      context: ./services/inventory-service
+    depends_on:
+      inventory-db:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      <<: *spring-env
+      DB_HOST: inventory-db
+      DB_PORT: 5432
+      DB_NAME: ${INVENTORY_DB_NAME:-inventory}
+      DB_USER: ${INVENTORY_DB_USER:-inventory}
+      DB_PASSWORD: ${INVENTORY_DB_PASSWORD:-change-me}
+
+  order-service:
+    <<: *spring-service
+    build:
+      context: ./services/order-service
+    depends_on:
+      order-db:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      <<: *spring-env
+      DB_HOST: order-db
+      DB_PORT: 5432
+      DB_NAME: ${ORDER_DB_NAME:-orders}
+      DB_USER: ${ORDER_DB_USER:-orders}
+      DB_PASSWORD: ${ORDER_DB_PASSWORD:-change-me}
+
+  billing-service:
+    <<: *spring-service
+    build:
+      context: ./services/billing-service
+    depends_on:
+      billing-db:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      <<: *spring-env
+      DB_HOST: billing-db
+      DB_PORT: 5432
+      DB_NAME: ${BILLING_DB_NAME:-billing}
+      DB_USER: ${BILLING_DB_USER:-billing}
+      DB_PASSWORD: ${BILLING_DB_PASSWORD:-change-me}
+
+  notification-service:
+    <<: *spring-service
+    build:
+      context: ./services/notification-service
+    depends_on:
+      notification-db:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      <<: *spring-env
+      DB_HOST: notification-db
+      DB_PORT: 5432
+      DB_NAME: ${NOTIFICATION_DB_NAME:-notification}
+      DB_USER: ${NOTIFICATION_DB_USER:-notification}
+      DB_PASSWORD: ${NOTIFICATION_DB_PASSWORD:-change-me}
+
+  # Point d'entrée unique de l'API : valide le JWT (clé publique RS256
+  # émise par auth-service), route vers les microservices, et est le
+  # SEUL service Spring atteignable depuis le frontend. Publié sur
+  # 127.0.0.1 uniquement, pour tester l'API directement (Swagger,
+  # Postman) pendant le dev sans passer par nginx.
+  gateway:
+    <<: *spring-service
+    build:
+      context: ./services/gateway
+    ports:
+      - "127.0.0.1:8081:8080"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    secrets:
+      - jwt_public_key
+    environment:
+      <<: *spring-env
+      JWT_PUBLIC_KEY_PATH: file:/run/secrets/jwt_public_key
+      JWT_ISSUER: ${JWT_ISSUER:-smartstock-auth}
+
+  # ---------------------------------------------------------------------
+  # Frontend Angular, buildé et servi par nginx dans un même conteneur
+  # (même pattern que MyPortfolio/azwebsite) : nginx sert les fichiers
+  # statiques ET fait office de reverse proxy vers la gateway pour /api
+  # et /ws (WebSocket du dashboard temps réel).
+  # ---------------------------------------------------------------------
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - gateway
+    ports:
+      - "${FRONTEND_PORT:-8446}:80"
+
+volumes:
+  auth_db_data:
+  inventory_db_data:
+  order_db_data:
+  billing_db_data:
+  notification_db_data:
+  kafka_data:
+
+# Clés RSA du JWT (RS256), générées par scripts/generate-jwt-keys.sh dans
+# ./secrets (non commité, voir .gitignore). Fichiers montés en lecture seule
+# dans /run/secrets/<nom> — pas besoin du mode Swarm pour ce driver "file".
+secrets:
+  jwt_private_key:
+    file: ./secrets/jwt_private_key
+  jwt_public_key:
+    file: ./secrets/jwt_public_key
