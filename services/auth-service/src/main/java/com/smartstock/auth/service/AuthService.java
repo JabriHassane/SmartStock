@@ -10,10 +10,14 @@ import com.smartstock.auth.entity.User;
 import com.smartstock.auth.exception.InvalidRefreshTokenException;
 import com.smartstock.auth.repository.RefreshTokenRepository;
 import com.smartstock.auth.repository.UserRepository;
+import com.smartstock.auth.security.ClientIp;
 import com.smartstock.auth.security.JwtService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,12 +32,14 @@ import java.util.List;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class AuthService {
 
     private final AuthenticationManager authenticationManager;
     private final UserRepository userRepository;
     private final RefreshTokenRepository refreshTokenRepository;
     private final JwtService jwtService;
+    private final LoginAttemptService loginAttemptService;
 
     @Value("${app.jwt.expiration-ms}")
     private long expirationMs;
@@ -45,10 +51,17 @@ public class AuthService {
 
     @Transactional
     public LoginResponse login(LoginRequest request) {
-        authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(request.username(), request.password()));
+        String username = request.username().trim();
+        String ip = ClientIp.current();
+        try {
+            authenticationManager.authenticate(new UsernamePasswordAuthenticationToken(username, request.password()));
+        } catch (BadCredentialsException e) {
+            loginAttemptService.recordFailure(username, ip);
+            throw e;
+        }
+        loginAttemptService.recordSuccess(username, ip);
 
-        User user = userRepository.findByUsername(request.username())
+        User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new IllegalStateException("Utilisateur authentifié introuvable"));
 
         List<String> roles = roleNames(user);
@@ -58,16 +71,36 @@ public class AuthService {
         return new LoginResponse(accessToken, refreshToken, expirationMs / 1000, roles);
     }
 
-    @Transactional
+    /**
+     * Rotation du refresh token. Présenter un token DÉJÀ révoqué signifie
+     * qu'il a été copié (l'utilisateur légitime et l'attaquant l'ont utilisé
+     * tour à tour) : toute la famille de sessions de l'utilisateur est alors
+     * révoquée, ce qui force une reconnexion des deux côtés.
+     */
+    @Transactional(noRollbackFor = InvalidRefreshTokenException.class)
     public TokenPairResponse refresh(RefreshRequest request) {
         RefreshToken stored = refreshTokenRepository.findByTokenHash(hash(request.refreshToken()))
-                .filter(t -> !t.isRevoked() && t.getExpiresAt().isAfter(Instant.now()))
                 .orElseThrow(() -> new InvalidRefreshTokenException("Refresh token invalide ou expiré"));
+        User user = stored.getUser();
+
+        if (stored.isRevoked()) {
+            refreshTokenRepository.revokeAllForUser(user.getId());
+            log.warn("SECURITY refresh-token-reuse user={} ip={} — toutes les sessions révoquées",
+                    user.getUsername(), ClientIp.current());
+            throw new InvalidRefreshTokenException("Refresh token invalide ou expiré");
+        }
+        if (stored.getExpiresAt().isBefore(Instant.now())) {
+            throw new InvalidRefreshTokenException("Refresh token invalide ou expiré");
+        }
+        if (!user.isEnabled() || user.isLocked()) {
+            refreshTokenRepository.revokeAllForUser(user.getId());
+            throw new InvalidRefreshTokenException("Compte désactivé ou verrouillé");
+        }
 
         stored.setRevoked(true);
         refreshTokenRepository.save(stored);
 
-        User user = stored.getUser();
+        // Rôles relus en base : un changement de rôle s'applique au prochain renouvellement.
         List<String> roles = roleNames(user);
         String accessToken = jwtService.generateAccessToken(user.getUsername(), roles);
         String newRefreshToken = issueRefreshToken(user);
@@ -81,7 +114,18 @@ public class AuthService {
                 .ifPresent(t -> {
                     t.setRevoked(true);
                     refreshTokenRepository.save(t);
+                    log.info("SECURITY logout user={}", t.getUser().getUsername());
                 });
+    }
+
+    /** Purge quotidienne des refresh tokens expirés (les révoqués non expirés restent pour détecter une réutilisation). */
+    @Scheduled(cron = "0 30 3 * * *")
+    @Transactional
+    public void purgeExpiredRefreshTokens() {
+        int deleted = refreshTokenRepository.deleteExpired(Instant.now());
+        if (deleted > 0) {
+            log.info("Purge : {} refresh token(s) expiré(s) supprimé(s)", deleted);
+        }
     }
 
     private String issueRefreshToken(User user) {

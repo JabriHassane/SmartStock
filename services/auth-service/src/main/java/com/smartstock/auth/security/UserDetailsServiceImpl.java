@@ -15,6 +15,11 @@ public class UserDetailsServiceImpl implements UserDetailsService {
 
     private final UserRepository userRepository;
 
+    /**
+     * accountNonLocked reflète le verrouillage temporaire : Spring Security
+     * vérifie le verrou AVANT le mot de passe, donc un compte verrouillé ne
+     * révèle plus si le mot de passe tenté est correct.
+     */
     @Override
     public org.springframework.security.core.userdetails.User loadUserByUsername(String username)
             throws UsernameNotFoundException {
@@ -26,6 +31,6 @@ public class UserDetailsServiceImpl implements UserDetailsService {
                 .toList();
 
         return new org.springframework.security.core.userdetails.User(
-                user.getUsername(), user.getPasswordHash(), user.isEnabled(), true, true, true, authorities);
+                user.getUsername(), user.getPasswordHash(), user.isEnabled(), true, true, !user.isLocked(), authorities);
     }
 }

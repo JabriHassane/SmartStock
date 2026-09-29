@@ -1,0 +1,239 @@
+# SmartStock — déploiement production (serveur homelab).
+#
+# Portée actuelle (voir README.md, section "Avancement") : auth-service,
+# inventory-service et order-service, chacun avec sa base, derrière un
+# nginx `frontend` qui sert l'application Angular, termine le TLS et
+# route /api/* vers le bon service selon le préfixe — en attendant que
+# `gateway` existe. Kafka n'est pas inclus : order-service appelle
+# inventory-service en REST synchrone (voir DEPLOY.md).
+#
+# Réseaux internal/edge + TLS auto-signé + publication sur l'IP Tailscale :
+# même pattern que MyPortfolio/azwebsite/video-dl-sass sur ce serveur.
+# Aucun port jamais publié sur 0.0.0.0.
+
+services:
+  auth-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${AUTH_DB_NAME:-auth}
+      POSTGRES_USER: ${AUTH_DB_USER:-auth}
+      POSTGRES_PASSWORD: ${AUTH_DB_PASSWORD:-change-me}
+    volumes:
+      - auth_db_data:/var/lib/postgresql/data
+    networks:
+      - internal
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${AUTH_DB_USER:-auth}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  auth-service:
+    build:
+      context: ./services/auth-service
+    restart: unless-stopped
+    depends_on:
+      auth-db:
+        condition: service_healthy
+    secrets:
+      - jwt_private_key
+      - jwt_public_key
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      DB_HOST: auth-db
+      DB_PORT: 5432
+      DB_NAME: ${AUTH_DB_NAME:-auth}
+      DB_USER: ${AUTH_DB_USER:-auth}
+      DB_PASSWORD: ${AUTH_DB_PASSWORD:-change-me}
+      JWT_PRIVATE_KEY_PATH: file:/run/secrets/jwt_private_key
+      JWT_PUBLIC_KEY_PATH: file:/run/secrets/jwt_public_key
+      JWT_ISSUER: ${JWT_ISSUER:-smartstock-auth}
+      JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS:-900000}
+      JWT_REFRESH_EXPIRATION_MS: ${JWT_REFRESH_EXPIRATION_MS:-2592000000}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@smartstock.local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://your-domain.tld}
+    # Sur "internal" pour joindre auth-db, sur "edge" pour être joignable
+    # par nginx (frontend) — alias explicite requis sur chaque réseau,
+    # comme documenté dans MyPortfolio/docker-compose.prod.yml.
+    networks:
+      internal:
+        aliases:
+          - auth-service
+      edge:
+        aliases:
+          - auth-service
+    # Durcissement : système de fichiers en lecture seule (hors /tmp), aucune
+    # capacité Linux, processus non-root (voir Dockerfile).
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  inventory-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${INVENTORY_DB_NAME:-inventory}
+      POSTGRES_USER: ${INVENTORY_DB_USER:-inventory}
+      POSTGRES_PASSWORD: ${INVENTORY_DB_PASSWORD:-change-me}
+    volumes:
+      - inventory_db_data:/var/lib/postgresql/data
+    networks:
+      - internal
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${INVENTORY_DB_USER:-inventory}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Catalogue, entrepôts, niveaux et mouvements de stock, alertes. Ne reçoit
+  # que la clé publique JWT : il vérifie les tokens, n'en émet jamais.
+  inventory-service:
+    build:
+      context: ./services/inventory-service
+    restart: unless-stopped
+    depends_on:
+      inventory-db:
+        condition: service_healthy
+    secrets:
+      - jwt_public_key
+    environment:
+      DB_HOST: inventory-db
+      DB_PORT: 5432
+      DB_NAME: ${INVENTORY_DB_NAME:-inventory}
+      DB_USER: ${INVENTORY_DB_USER:-inventory}
+      DB_PASSWORD: ${INVENTORY_DB_PASSWORD:-change-me}
+      JWT_PUBLIC_KEY_PATH: file:/run/secrets/jwt_public_key
+      JWT_ISSUER: ${JWT_ISSUER:-smartstock-auth}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN manquant dans .env.production}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://your-domain.tld}
+    networks:
+      internal:
+        aliases:
+          - inventory-service
+      edge:
+        aliases:
+          - inventory-service
+    # Durcissement : système de fichiers en lecture seule (hors /tmp), aucune
+    # capacité Linux, processus non-root (voir Dockerfile).
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  order-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${ORDER_DB_NAME:-orders}
+      POSTGRES_USER: ${ORDER_DB_USER:-orders}
+      POSTGRES_PASSWORD: ${ORDER_DB_PASSWORD:-change-me}
+    volumes:
+      - order_db_data:/var/lib/postgresql/data
+    networks:
+      - internal
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ORDER_DB_USER:-orders}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Fournisseurs, clients, commandes d'achat/vente. À la réception ou à
+  # l'expédition d'une commande, appelle inventory-service (réseau
+  # internal) en relayant le JWT de l'utilisateur.
+  order-service:
+    build:
+      context: ./services/order-service
+    restart: unless-stopped
+    depends_on:
+      order-db:
+        condition: service_healthy
+      inventory-service:
+        condition: service_started
+    secrets:
+      - jwt_public_key
+    environment:
+      DB_HOST: order-db
+      DB_PORT: 5432
+      DB_NAME: ${ORDER_DB_NAME:-orders}
+      DB_USER: ${ORDER_DB_USER:-orders}
+      DB_PASSWORD: ${ORDER_DB_PASSWORD:-change-me}
+      JWT_PUBLIC_KEY_PATH: file:/run/secrets/jwt_public_key
+      JWT_ISSUER: ${JWT_ISSUER:-smartstock-auth}
+      INVENTORY_SERVICE_URL: http://inventory-service:8080
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?INTERNAL_API_TOKEN manquant dans .env.production}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://your-domain.tld}
+    networks:
+      internal:
+        aliases:
+          - order-service
+      edge:
+        aliases:
+          - order-service
+    # Durcissement : système de fichiers en lecture seule (hors /tmp), aucune
+    # capacité Linux, processus non-root (voir Dockerfile).
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  # Sert l'application Angular, termine le TLS et route /api/* vers le bon
+  # service (voir frontend/nginx.conf). Publié sur 127.0.0.1 (pour
+  # cloudflared, pointé sur localhost:8446 côté dashboard Cloudflare) et
+  # sur l'IP Tailscale (accès direct tailnet) — jamais 0.0.0.0.
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - auth-service
+      - inventory-service
+      - order-service
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-8446}:443"
+      - "${TAILSCALE_IP:-100.103.213.104}:${FRONTEND_PORT:-8446}:443"
+    networks:
+      - edge
+    # Même contournement DNS que MyPortfolio/azwebsite : désactive le
+    # search domain hérité pour que le DNS interne de Docker résolve
+    # les noms des services directement.
+    dns_search:
+      - .
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  internal:
+  edge:
+    driver_opts:
+      com.docker.network.driver.mtu: 1280
+
+volumes:
+  auth_db_data:
+  inventory_db_data:
+  order_db_data:
+
+# Clés RSA du JWT (RS256), générées par scripts/generate-jwt-keys.sh dans
+# ./secrets (non commité). Montées en lecture seule dans /run/secrets/<nom>.
+secrets:
+  jwt_private_key:
+    file: ./secrets/jwt_private_key
+  jwt_public_key:
+    file: ./secrets/jwt_public_key

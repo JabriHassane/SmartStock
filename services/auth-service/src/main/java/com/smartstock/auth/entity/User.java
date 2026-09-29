@@ -38,6 +38,15 @@ public class User {
     @Column(nullable = false)
     private boolean enabled = true;
 
+    @Column(name = "failed_login_attempts", nullable = false)
+    private int failedLoginAttempts;
+
+    @Column(name = "locked_until")
+    private Instant lockedUntil;
+
+    @Column(name = "last_login_at")
+    private Instant lastLoginAt;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -50,6 +59,10 @@ public class User {
             joinColumns = @JoinColumn(name = "user_id"),
             inverseJoinColumns = @JoinColumn(name = "role_id"))
     private Set<Role> roles = new HashSet<>();
+
+    public boolean isLocked() {
+        return lockedUntil != null && lockedUntil.isAfter(Instant.now());
+    }
 
     @PrePersist
     void onCreate() {

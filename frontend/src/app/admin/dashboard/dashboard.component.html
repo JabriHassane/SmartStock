@@ -1,0 +1,210 @@
+<div class="page-header">
+  <div>
+    <h1 class="page-title">{{ greeting }}, {{ auth.user()?.firstName || auth.displayName() }}</h1>
+    <p class="page-subtitle capitalize">{{ today }} · voici l'état de votre stock.</p>
+  </div>
+  <div class="page-actions">
+    <div class="segmented" role="group" aria-label="Période">
+      @for (d of [7, 30, 90]; track d) {
+        <button [class.active]="days() === d" (click)="setDays(d)">{{ d }} j</button>
+      }
+    </div>
+    <a routerLink="/app/stock" [queryParams]="{ action: 'IN' }" class="btn btn-secondary"><app-icon name="transfer" /> Mouvement</a>
+    @if (auth.canManage) {
+      <a routerLink="/app/orders/new" class="btn btn-primary"><app-icon name="plus" /> Nouvelle commande</a>
+    }
+  </div>
+</div>
+
+@if (error()) {
+  <div class="alert-box danger"><app-icon name="alert" /> {{ error() }} <button class="btn btn-sm btn-secondary retry" (click)="load()">Réessayer</button></div>
+}
+
+@if (inventory(); as inv) {
+  <!-- KPI -->
+  <div class="grid grid-4">
+    <div class="kpi kpi-hero">
+      <div class="kpi-top"><span class="kpi-icon"><app-icon name="wallet" /></span><span class="kpi-label">Valeur du stock</span></div>
+      <strong>{{ inv.summary.stockValue | money }}</strong>
+      <small>Valeur de vente potentielle : {{ inv.summary.potentialRevenue | money:true }}</small>
+    </div>
+    <div class="kpi">
+      <div class="kpi-top"><span class="kpi-icon blue"><app-icon name="package" /></span><span class="kpi-label">Produits actifs</span></div>
+      <strong>{{ inv.summary.activeProducts | num }}</strong>
+      <small>{{ inv.summary.totalUnits | num }} unités · {{ inv.summary.categories }} catégories · {{ inv.summary.warehouses }} entrepôts</small>
+    </div>
+    <a class="kpi link" routerLink="/app/alerts">
+      <div class="kpi-top"><span class="kpi-icon amber"><app-icon name="alert" /></span><span class="kpi-label">Alertes de stock</span></div>
+      <strong>{{ inv.summary.lowStock + inv.summary.outOfStock }}</strong>
+      <small><span class="text-danger fw-600">{{ inv.summary.outOfStock }} rupture(s)</span> · <span class="text-warning fw-600">{{ inv.summary.lowStock }} stock(s) bas</span></small>
+    </a>
+    <div class="kpi">
+      <div class="kpi-top"><span class="kpi-icon green"><app-icon name="shield" /></span><span class="kpi-label">Santé du stock</span></div>
+      <strong>{{ health() }} %</strong>
+      <div class="meter"><span [style.width.%]="health()" [class.warn]="health() < 80" [class.bad]="health() < 50"></span></div>
+      <small>{{ inv.summary.movementsToday }} mouvement(s) aujourd'hui</small>
+    </div>
+  </div>
+
+  <!-- Flux + catégories -->
+  <div class="grid grid-3 mt-6">
+    <section class="card span-2">
+      <div class="card-header">
+        <div>
+          <div class="card-title">Flux de stock</div>
+          <div class="card-subtitle">Entrées et sorties sur {{ days() }} jours (hors transferts)</div>
+        </div>
+        <div class="flow-totals">
+          <span><app-icon name="arrow-down" class="text-primary" /> {{ flowTotals().in | num }}</span>
+          <span><app-icon name="arrow-up" class="text-success" /> {{ flowTotals().out | num }}</span>
+        </div>
+      </div>
+      <div class="card-body">
+        <app-area-chart [series]="flowSeries()" [labels]="flowLabels()" [height]="260" />
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">Valeur par catégorie</div>
+          <div class="card-subtitle">Au prix d'achat</div>
+        </div>
+      </div>
+      <div class="card-body">
+        @if (categorySegments().length) {
+          <app-donut [segments]="categorySegments()" [centerValue]="(inv.summary.stockValue | money:true)" centerLabel="valeur totale" />
+        } @else {
+          <div class="empty"><app-icon name="tag" /><h4>Pas encore de stock</h4><p>Ajoutez des produits et des entrées.</p></div>
+        }
+      </div>
+    </section>
+  </div>
+
+  <!-- Commandes -->
+  @if (orders(); as ord) {
+    <div class="grid grid-3 mt-6">
+      <section class="card span-2">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Ventes et achats</div>
+            <div class="card-subtitle">Commandes terminées, TTC, 6 derniers mois</div>
+          </div>
+        </div>
+        <div class="card-body">
+          <app-bar-chart [series]="monthSeries()" [labels]="monthLabels()" [height]="240" [format]="moneyFormat" />
+        </div>
+      </section>
+      <section class="card orders-card">
+        <div class="card-header"><div class="card-title">Commandes</div><a routerLink="/app/orders" class="btn btn-ghost btn-sm">Tout voir</a></div>
+        <div class="card-body">
+          <div class="mini-stats">
+            <div><small>Ventes ce mois</small><strong>{{ ord.salesThisMonth | money:true }}</strong></div>
+            <div><small>Achats ce mois</small><strong>{{ ord.purchasesThisMonth | money:true }}</strong></div>
+            <a routerLink="/app/orders" [queryParams]="{ type: 'SALE' }"><small>Ventes en cours</small><strong>{{ ord.pendingSales }}</strong></a>
+            <a routerLink="/app/orders" [queryParams]="{ type: 'PURCHASE' }"><small>Achats en cours</small><strong>{{ ord.pendingPurchases }}</strong></a>
+          </div>
+          <ul class="list">
+            @for (o of ord.recent.slice(0, 4); track o.id) {
+              <li>
+                <a [routerLink]="['/app/orders', o.id]">
+                  <span class="list-icon" [class.sale]="o.type === 'SALE'"><app-icon [name]="o.type === 'SALE' ? 'cart' : 'truck'" /></span>
+                  <span class="list-main"><b>{{ o.orderNumber }}</b><small>{{ o.partnerName }}</small></span>
+                  <span class="badge" [class]="'badge ' + ORDER_STATUS[o.status].badge">{{ ORDER_STATUS[o.status].label }}</span>
+                </a>
+              </li>
+            } @empty {
+              <li class="muted small-empty">Aucune commande pour l'instant.</li>
+            }
+          </ul>
+        </div>
+      </section>
+    </div>
+  }
+
+  <!-- Alertes + mouvements + top -->
+  <div class="grid grid-3 mt-6">
+    <section class="card">
+      <div class="card-header">
+        <div class="card-title">Alertes prioritaires</div>
+        <a routerLink="/app/alerts" class="btn btn-ghost btn-sm">Tout voir</a>
+      </div>
+      <ul class="list padded">
+        @for (a of inv.alerts; track a.productId) {
+          <li>
+            <a [routerLink]="['/app/products', a.productId]">
+              <span class="list-icon" [class.danger]="a.status === 'OUT'" [class.warn]="a.status !== 'OUT'"><app-icon name="alert" /></span>
+              <span class="list-main">
+                <b>{{ a.productName }}</b>
+                <small>
+                  {{ a.totalQuantity | num }} en stock
+                  @if (a.daysOfCover !== null) { · ~{{ a.daysOfCover }} j restants }
+                </small>
+              </span>
+              <span class="badge" [class]="'badge ' + STATUS[a.status].badge">{{ STATUS[a.status].label }}</span>
+            </a>
+          </li>
+        } @empty {
+          <li class="all-good"><app-icon name="check-circle" /> Aucun produit à réapprovisionner.</li>
+        }
+      </ul>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <div class="card-title">Derniers mouvements</div>
+        <a routerLink="/app/movements" class="btn btn-ghost btn-sm">Historique</a>
+      </div>
+      <ul class="list padded">
+        @for (m of inv.recentMovements; track m.id) {
+          <li>
+            <div class="row-item">
+              <span class="list-icon" [class.in]="m.quantity > 0" [class.out]="m.quantity < 0">
+                <app-icon [name]="m.quantity > 0 ? 'arrow-down' : 'arrow-up'" />
+              </span>
+              <span class="list-main">
+                <b>{{ m.productName }}</b>
+                <small>{{ MOVEMENT[m.type].label }} · {{ m.warehouseCode }} · {{ m.createdAt | ago }}</small>
+              </span>
+              <span class="qty" [class.text-success]="m.quantity > 0" [class.text-danger]="m.quantity < 0">{{ m.quantity > 0 ? '+' : '' }}{{ m.quantity | num }}</span>
+            </div>
+          </li>
+        } @empty {
+          <li class="muted small-empty">Aucun mouvement enregistré.</li>
+        }
+      </ul>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">Top sorties</div>
+          <div class="card-subtitle">30 derniers jours</div>
+        </div>
+      </div>
+      <ul class="top padded">
+        @for (p of inv.topProducts; track p.productId; let i = $index) {
+          <li>
+            <a [routerLink]="['/app/products', p.productId]">
+              <span class="rank">{{ i + 1 }}</span>
+              <span class="top-main">
+                <span class="top-line"><b>{{ p.name }}</b><span>{{ p.outQuantity | num }}</span></span>
+                <span class="bar"><span [style.width.%]="(p.outQuantity / topMax()) * 100"></span></span>
+              </span>
+            </a>
+          </li>
+        } @empty {
+          <li class="muted small-empty">Pas encore de sorties sur la période.</li>
+        }
+      </ul>
+    </section>
+  </div>
+} @else if (loading()) {
+  <div class="grid grid-4">
+    @for (i of [1, 2, 3, 4]; track i) { <div class="skeleton" style="height: 132px"></div> }
+  </div>
+  <div class="grid grid-3 mt-6">
+    <div class="skeleton span-2" style="height: 340px"></div>
+    <div class="skeleton" style="height: 340px"></div>
+  </div>
+}

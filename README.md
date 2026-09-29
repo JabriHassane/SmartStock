@@ -8,13 +8,13 @@ d'infrastructure que les autres projets du homelab (voir
 ## Avancement
 
 - [x] Infrastructure (`docker-compose.yml`, réseaux, bases, Kafka)
-- [x] `auth-service` — JWT RS256, RBAC (SuperAdmin/Gestionnaire/Magasinier), refresh tokens, `POST /api/auth/{login,refresh,logout}`, `POST/GET /api/users`, `GET /api/users/me`
-- [ ] `inventory-service`
-- [ ] `order-service`
+- [x] `auth-service` — JWT RS256, RBAC (SuperAdmin/Gestionnaire/Magasinier), refresh tokens, gestion complète des utilisateurs (création, modification, désactivation, réinitialisation/changement de mot de passe, profil)
+- [x] `inventory-service` — catégories, produits, entrepôts, niveaux de stock, mouvements (entrée/sortie/inventaire/transfert), alertes et prévision de rupture, tableau de bord
+- [x] `order-service` — fournisseurs, clients, bons d'achat/vente (brouillon → confirmé → réceptionné/expédié), mise à jour du stock via inventory-service
 - [ ] `billing-service`
 - [ ] `notification-service`
 - [ ] `gateway`
-- [ ] Frontend Angular
+- [x] Frontend Angular — landing page + espace d'administration (voir [Frontend](#frontend))
 
 ## Microservices
 
@@ -87,6 +87,27 @@ pas d'orchestrateur central) :
   opérations sensibles.
 - Angular : `HttpInterceptor` pour le JWT + `Guard` sur les routes selon
   le rôle.
+- **Sessions** : access token de 15 min (issuer vérifié par tous les
+  services), refresh token opaque tourné à chaque usage ; réutiliser un
+  refresh token déjà consommé révoque toutes les sessions de l'utilisateur
+  (détection de vol). Désactivation, changement de rôle ou de mot de passe
+  = sessions révoquées.
+- **Anti brute-force** : 5 échecs → compte verrouillé 15 min
+  (`MAX_FAILED_LOGINS`, `LOCKOUT_DURATION`), en plus de la limite nginx
+  (5 tentatives/min/IP, réponse 429).
+- **Mots de passe** : BCrypt coût 12 ; 10 à 72 caractères avec majuscule,
+  minuscule et chiffre (`@StrongPassword`).
+- **Appels internes** : `/api/stock/movements/batch` exige le secret
+  `INTERNAL_API_TOKEN` (comparaison à temps constant) et est bloqué par
+  nginx côté public.
+- **Entrées** : tailles maximales sur tous les champs texte, listes et
+  montants ; erreurs génériques côté client, détails journalisés côté
+  serveur uniquement.
+- **Journal de sécurité** : lignes `SECURITY` (connexions réussies/échouées,
+  verrouillages, réutilisation de token, gestion des comptes, accès
+  refusés) avec l'IP réelle du client (`docker logs smartstock-auth-service-1 | grep SECURITY`).
+- **Conteneurs** : JRE non-root (uid 1000), système de fichiers en lecture
+  seule (`/tmp` en tmpfs), aucune capacité Linux, `no-new-privileges`.
 
 ## Schéma de base de données (par microservice)
 
@@ -184,3 +205,81 @@ curl -X POST http://localhost:8081/api/auth/login \
 (`8081` = port de la `gateway` une fois celle-ci implémentée ; en attendant,
 publier temporairement le port 8080 d'`auth-service` pour tester en
 isolation.)
+
+### `inventory-service`
+
+| Méthode | Route | Rôle |
+|---|---|---|
+| GET | `/api/categories` | tous |
+| POST/PUT/DELETE | `/api/categories[/{id}]` | SUPERADMIN, GESTIONNAIRE |
+| GET | `/api/products` (filtres `search`, `categoryId`, `status`, `active`, pagination) | tous |
+| GET | `/api/products/options`, `/api/products/{id}` (stock par entrepôt + prévision) | tous |
+| POST/PUT/DELETE | `/api/products[/{id}]` | SUPERADMIN, GESTIONNAIRE |
+| GET | `/api/warehouses` | tous |
+| POST/PUT | `/api/warehouses[/{id}]` | SUPERADMIN, GESTIONNAIRE |
+| DELETE | `/api/warehouses/{id}` | SUPERADMIN |
+| GET | `/api/stock`, `/api/stock/movements`, `/api/stock/alerts` | tous |
+| POST | `/api/stock/movements` (IN/OUT/ADJUSTMENT), `/api/stock/transfers` | tous (Magasinier inclus) |
+| POST | `/api/stock/movements/batch` | appelé par order-service (idempotent par n° de commande) |
+| GET | `/api/dashboard/inventory?days=30` | tous |
+
+**Prévision de rupture** : vélocité = sorties (`OUT`) des 30 derniers jours / 30 ;
+couverture = stock / vélocité. Un produit est en alerte s'il est en rupture,
+sous son seuil, ou à moins de 7 jours de couverture ; la quantité suggérée
+couvre 30 jours (ou la quantité de réappro. du produit si plus grande).
+
+Chaque mouvement verrouille sa ligne `stock_levels` (`PESSIMISTIC_WRITE`) ;
+un stock ne peut jamais devenir négatif (contrainte SQL + contrôle métier).
+
+### `order-service`
+
+| Méthode | Route | Rôle |
+|---|---|---|
+| GET | `/api/suppliers`, `/api/customers` | tous |
+| POST/PUT/DELETE | `/api/suppliers[/{id}]`, `/api/customers[/{id}]` | SUPERADMIN, GESTIONNAIRE |
+| GET | `/api/orders` (filtres `type`, `status`, `search`), `/api/orders/{id}` | tous |
+| POST/PUT | `/api/orders[/{id}]` (brouillon uniquement) | SUPERADMIN, GESTIONNAIRE |
+| POST | `/api/orders/{id}/confirm`, `/cancel` ; DELETE `/api/orders/{id}` | SUPERADMIN, GESTIONNAIRE |
+| POST | `/api/orders/{id}/complete` (réception/expédition) | tous (Magasinier inclus) |
+| GET | `/api/dashboard/orders` | tous |
+
+**Écart assumé par rapport au flux Kafka décrit plus haut** : en attendant
+`billing-service` et `notification-service`, la réception/expédition d'une
+commande appelle `inventory-service` en REST synchrone (JWT de l'utilisateur
+relayé) et applique toutes les lignes en une transaction. Avantage : un
+stock insuffisant est refusé immédiatement et la commande reste
+`CONFIRMED`. L'appel est idempotent (référence = n° de commande), donc un
+nouvel essai après une panne ne double jamais le stock. Kafka reviendra
+avec la facturation.
+
+## Frontend
+
+Angular 18 (standalone, signals), sans librairie UI : design system maison
+aux couleurs AzWebSolution (bleu `#2f73f2`, marine `#102d47`/`#081738`,
+police DM Sans), graphiques SVG faits main, icônes embarquées — aucune
+ressource externe hormis Google Fonts, compatible avec la CSP stricte de
+nginx.
+
+- **Landing page** (`/`) : hero avec aperçu animé du tableau de bord,
+  fonctionnalités en bento, étapes, prévisions, rôles, FAQ.
+- **Espace d'administration** (`/app`) : barre latérale repliable, barre
+  du haut, recherche globale `Ctrl/⌘ + K`, thème clair/sombre, responsive.
+  Tableau de bord (KPI, flux, valeur par catégorie, ventes/achats, alertes,
+  derniers mouvements, top sorties), produits (+ fiche avec prévision),
+  catégories, entrepôts, niveaux de stock, mouvements, alertes, commandes
+  (formulaire + suivi + impression), fournisseurs, clients, utilisateurs,
+  profil. Exports CSV (séparateur `;`, compatible Excel).
+- **API** : toujours en chemin relatif `/api` (même origine que
+  l'application) — jamais d'URL absolue, donc pas de CORS et une CSP
+  `connect-src 'self'`.
+
+Dev local : `cd frontend && npm install && npm start` (proxy `/api` vers
+`https://localhost:8446`, voir `proxy.conf.json`).
+
+## Déploiement (production)
+
+Voir [`DEPLOY.md`](./DEPLOY.md) — même pattern que MyPortfolio/azwebsite/
+video-dl-sass sur le serveur homelab (`docker-compose.prod.yml`, TLS
+auto-signé, réseaux `internal`/`edge`, publication sur l'IP Tailscale,
+tunnel Cloudflare existant). Portée actuelle : auth, inventory, order et
+le frontend Angular ; billing, notification et gateway restent à faire.

@@ -1,6 +1,7 @@
 package com.smartstock.auth.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 
 import java.util.List;
 
@@ -10,12 +11,12 @@ public final class AuthDtos {
     }
 
     public record LoginRequest(
-            @NotBlank String username,
-            @NotBlank String password) {
+            @NotBlank @Size(max = 100) String username,
+            @NotBlank @Size(max = 72) String password) {
     }
 
     public record RefreshRequest(
-            @NotBlank String refreshToken) {
+            @NotBlank @Size(max = 100) String refreshToken) {
     }
 
     public record TokenPairResponse(

@@ -1,0 +1,294 @@
+<!-- ============ Navigation ============ -->
+<header class="nav" [class.scrolled]="scrolled()">
+  <div class="container nav-inner">
+    <a routerLink="/" class="brand" aria-label="SmartStock, accueil">
+      <span class="logo"><img src="favicon.svg" alt="" width="34" height="34"></span>
+      <span>Smart<b>Stock</b></span>
+    </a>
+    <nav class="links" [class.open]="menuOpen()">
+      <a href="#features" (click)="menuOpen.set(false)">Fonctionnalités</a>
+      <a href="#how" (click)="menuOpen.set(false)">Comment ça marche</a>
+      <a href="#smart" (click)="menuOpen.set(false)">Prévisions</a>
+      <a href="#roles" (click)="menuOpen.set(false)">Rôles</a>
+      <a href="#faq" (click)="menuOpen.set(false)">FAQ</a>
+      <a [routerLink]="auth.isAuthenticated() ? '/app' : '/login'" class="menu-cta">{{ auth.isAuthenticated() ? 'Mon espace' : 'Connexion' }}</a>
+    </nav>
+    <div class="nav-cta">
+      @if (auth.isAuthenticated()) {
+        <a routerLink="/app" class="btn btn-primary top-cta">Mon espace <app-icon name="arrow-right" /></a>
+      } @else {
+        <a routerLink="/login" class="btn btn-ghost login-link">Connexion</a>
+        <a routerLink="/login" class="btn btn-primary top-cta">Commencer <app-icon name="arrow-right" /></a>
+      }
+      <button class="btn btn-ghost btn-icon burger" (click)="menuOpen.set(!menuOpen())" aria-label="Menu">
+        <app-icon [name]="menuOpen() ? 'x' : 'menu'" />
+      </button>
+    </div>
+  </div>
+</header>
+
+<!-- ============ Hero ============ -->
+<section class="hero">
+  <div class="hero-bg" aria-hidden="true">
+    <div class="glow g1"></div>
+    <div class="glow g2"></div>
+    <div class="grid-pattern"></div>
+  </div>
+
+  <div class="container hero-inner">
+    <div class="hero-copy">
+      <span class="pill"><span class="pill-tag">Nouveau</span> Prévisions de rupture intelligentes <app-icon name="sparkles" /></span>
+      <h1>Pilotez votre stock en temps réel. <span class="gradient-text">Anticipez chaque rupture.</span></h1>
+      <p class="lead">
+        SmartStock centralise produits, entrepôts, mouvements et commandes dans une plateforme unique —
+        et vous alerte avant que vos rayons ne se vident.
+      </p>
+      <div class="hero-actions">
+        <a [routerLink]="auth.isAuthenticated() ? '/app' : '/login'" class="btn btn-primary btn-lg">
+          Accéder à la plateforme <app-icon name="arrow-right" />
+        </a>
+        <a href="#features" class="btn btn-lg btn-glass">Découvrir les fonctionnalités</a>
+      </div>
+      <ul class="hero-points">
+        <li><app-icon name="check-circle" /> Multi-entrepôts</li>
+        <li><app-icon name="check-circle" /> Alertes prédictives</li>
+        <li><app-icon name="check-circle" /> Sécurisé de bout en bout</li>
+      </ul>
+    </div>
+
+    <!-- Aperçu du tableau de bord, construit en HTML/CSS -->
+    <div class="hero-visual" aria-hidden="true">
+      <div class="mock">
+        <div class="mock-bar">
+          <span></span><span></span><span></span>
+          <div class="mock-url"><app-icon name="lock" /> smart-stock.azwebtech.net/app</div>
+        </div>
+        <div class="mock-body">
+          <aside class="mock-side">
+            <i class="active"></i><i></i><i></i><i></i><i></i><i></i>
+          </aside>
+          <div class="mock-main">
+            <div class="mock-kpis">
+              <div class="kpi"><small>Valeur du stock</small><strong>1,28 M MAD</strong><em class="up">+8,4 %</em></div>
+              <div class="kpi"><small>Produits actifs</small><strong>1 246</strong><em class="up">+32</em></div>
+              <div class="kpi"><small>Alertes</small><strong>7</strong><em class="down">3 ruptures</em></div>
+            </div>
+            <div class="mock-chart">
+              <div class="mock-chart-head"><b>Flux de stock · 30 jours</b><span><i class="dot-in"></i>Entrées <i class="dot-out"></i>Sorties</span></div>
+              <svg viewBox="0 0 300 110" preserveAspectRatio="none">
+                <defs>
+                  <linearGradient id="hin" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2f73f2" stop-opacity=".35"/><stop offset="1" stop-color="#2f73f2" stop-opacity="0"/></linearGradient>
+                  <linearGradient id="hout" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#10b981" stop-opacity=".3"/><stop offset="1" stop-color="#10b981" stop-opacity="0"/></linearGradient>
+                </defs>
+                <path class="draw" d="M0,80 C25,70 40,40 70,48 C100,56 115,30 145,26 C175,22 190,52 220,44 C250,36 270,18 300,14 L300,110 L0,110Z" fill="url(#hin)"/>
+                <path class="draw line" d="M0,80 C25,70 40,40 70,48 C100,56 115,30 145,26 C175,22 190,52 220,44 C250,36 270,18 300,14" fill="none" stroke="#2f73f2" stroke-width="2.5"/>
+                <path d="M0,95 C30,90 45,70 75,74 C105,78 125,60 150,64 C180,68 200,56 230,60 C255,63 275,48 300,50 L300,110 L0,110Z" fill="url(#hout)"/>
+                <path class="draw line delay" d="M0,95 C30,90 45,70 75,74 C105,78 125,60 150,64 C180,68 200,56 230,60 C255,63 275,48 300,50" fill="none" stroke="#10b981" stroke-width="2.5"/>
+              </svg>
+            </div>
+            <div class="mock-rows">
+              <div class="row"><span class="sq blue"></span><b>Laptop Pro 14</b><span class="tag ok">En stock</span></div>
+              <div class="row"><span class="sq amber"></span><b>Ramette papier A4</b><span class="tag low">Stock bas</span></div>
+              <div class="row"><span class="sq violet"></span><b>Écran 27" 4K</b><span class="tag ok">En stock</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="float f-alert">
+        <span class="f-icon warn"><app-icon name="alert" /></span>
+        <div><b>Rupture dans 6 jours</b><small>Ramette papier A4 · commander 120</small></div>
+      </div>
+      <div class="float f-move">
+        <span class="f-icon ok"><app-icon name="arrow-down" /></span>
+        <div><b>+100 unités réceptionnées</b><small>BA-2026-00042 · Casablanca</small></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="container stats">
+    <div><strong>3</strong><span>rôles métier prêts à l'emploi</span></div>
+    <div><strong>5</strong><span>types de mouvements tracés</span></div>
+    <div><strong>30 j</strong><span>de vélocité analysée par produit</span></div>
+    <div><strong>100 %</strong><span>web, sans installation</span></div>
+  </div>
+</section>
+
+<!-- ============ Fonctionnalités (bento) ============ -->
+<section id="features" class="section">
+  <div class="container">
+    <div class="section-head">
+      <span class="eyebrow">Fonctionnalités</span>
+      <h2>Tout ce qu'il faut pour un stock <span class="gradient-text">sous contrôle</span></h2>
+      <p>De la réception fournisseur à l'expédition client, chaque unité est suivie, valorisée et analysée.</p>
+    </div>
+
+    <div class="bento">
+      <article class="tile tile-hero">
+        <div class="tile-copy">
+          <span class="tile-icon blue"><app-icon name="dashboard" /></span>
+          <h3>Un tableau de bord qui parle</h3>
+          <p>Valeur du stock, flux d'entrées/sorties, répartition par catégorie, top des ventes et dernières opérations — en un coup d'œil.</p>
+        </div>
+        <div class="bars" aria-hidden="true">
+          @for (h of [42, 64, 50, 78, 58, 90, 72, 84, 66, 96]; track $index) {
+            <span [style.height.%]="h" [style.animation-delay.ms]="$index * 70"></span>
+          }
+        </div>
+      </article>
+
+      <article class="tile tile-smart">
+        <span class="tile-icon amber"><app-icon name="sparkles" /></span>
+        <h3>Alertes prédictives</h3>
+        <p>Jours de couverture et quantité à commander calculés automatiquement.</p>
+        <div class="gauge" aria-hidden="true">
+          <svg viewBox="0 0 120 70">
+            <path d="M10,60 A50,50 0 0 1 110,60" fill="none" stroke="var(--border)" stroke-width="10" stroke-linecap="round"/>
+            <path class="gauge-fill" d="M10,60 A50,50 0 0 1 110,60" fill="none" stroke="url(#gg)" stroke-width="10" stroke-linecap="round"/>
+            <defs><linearGradient id="gg"><stop offset="0" stop-color="#ef4444"/><stop offset=".5" stop-color="#f59e0b"/><stop offset="1" stop-color="#10b981"/></linearGradient></defs>
+          </svg>
+          <div><strong>6 j</strong><small>de couverture</small></div>
+        </div>
+      </article>
+
+      @for (f of features; track f.title) {
+        <article class="tile">
+          <span class="tile-icon" [class]="'tile-icon ' + f.tone"><app-icon [name]="f.icon" /></span>
+          <h3>{{ f.title }}</h3>
+          <p>{{ f.text }}</p>
+        </article>
+      }
+    </div>
+  </div>
+</section>
+
+<!-- ============ Comment ça marche ============ -->
+<section id="how" class="section section-alt">
+  <div class="container">
+    <div class="section-head">
+      <span class="eyebrow">Comment ça marche</span>
+      <h2>Opérationnel en <span class="gradient-text">quatre étapes</span></h2>
+    </div>
+    <ol class="steps">
+      @for (s of steps; track s.title; let i = $index) {
+        <li>
+          <span class="step-num">0{{ i + 1 }}</span>
+          <span class="step-icon"><app-icon [name]="s.icon" /></span>
+          <h3>{{ s.title }}</h3>
+          <p>{{ s.text }}</p>
+        </li>
+      }
+    </ol>
+  </div>
+</section>
+
+<!-- ============ Prévisions ============ -->
+<section id="smart" class="section">
+  <div class="container split">
+    <div>
+      <span class="eyebrow">Stock intelligent</span>
+      <h2>Ne subissez plus les ruptures : <span class="gradient-text">voyez-les venir</span></h2>
+      <p class="split-lead">
+        SmartStock observe la vitesse de sortie de chaque produit et la compare à votre stock disponible.
+        Résultat : une liste d'alertes triée par urgence, avec la quantité exacte à recommander.
+      </p>
+      <ul class="checks">
+        <li><app-icon name="check" /> Vélocité moyenne calculée sur 30 jours glissants</li>
+        <li><app-icon name="check" /> Seuil de réapprovisionnement personnalisable par produit</li>
+        <li><app-icon name="check" /> Quantité suggérée pour couvrir le mois suivant</li>
+        <li><app-icon name="check" /> Réception de commande = stock mis à jour instantanément</li>
+      </ul>
+    </div>
+    <div class="forecast-card">
+      <div class="fc-head">
+        <div><small>Produit</small><b>Ramette papier A4</b></div>
+        <span class="tag low">Stock bas</span>
+      </div>
+      <div class="fc-metrics">
+        <div><small>En stock</small><strong>40</strong></div>
+        <div><small>Sorties / jour</small><strong>6,5</strong></div>
+        <div><small>Couverture</small><strong class="warn">6 j</strong></div>
+      </div>
+      <div class="fc-timeline" aria-hidden="true">
+        <div class="fc-track"><div class="fc-fill"></div></div>
+        <div class="fc-labels"><span>Aujourd'hui</span><span class="danger">Rupture estimée</span></div>
+      </div>
+      <div class="fc-suggest">
+        <app-icon name="sparkles" />
+        <div><b>Commander 160 unités</b><small>pour couvrir les 30 prochains jours</small></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ Rôles ============ -->
+<section id="roles" class="section section-alt">
+  <div class="container">
+    <div class="section-head">
+      <span class="eyebrow">Rôles & permissions</span>
+      <h2>Chacun son métier, <span class="gradient-text">chacun ses accès</span></h2>
+      <p>Un contrôle d'accès appliqué côté serveur, sur chaque service — pas seulement dans l'interface.</p>
+    </div>
+    <div class="roles">
+      @for (r of roles; track r.name) {
+        <article class="role">
+          <span class="role-icon"><app-icon [name]="r.icon" /></span>
+          <span class="badge" [class]="'badge ' + r.badge">{{ r.name }}</span>
+          <ul>
+            @for (p of r.perms; track p) {
+              <li><app-icon name="check" /> {{ p }}</li>
+            }
+          </ul>
+        </article>
+      }
+    </div>
+  </div>
+</section>
+
+<!-- ============ FAQ ============ -->
+<section id="faq" class="section">
+  <div class="container faq-wrap">
+    <div class="section-head left">
+      <span class="eyebrow">FAQ</span>
+      <h2>Questions fréquentes</h2>
+      <p>Une question qui n'est pas ici ? Votre administrateur SmartStock est là pour vous aider.</p>
+    </div>
+    <div class="faq">
+      @for (f of faqs; track f.q) {
+        <details>
+          <summary>{{ f.q }} <app-icon name="chevron-down" /></summary>
+          <p>{{ f.a }}</p>
+        </details>
+      }
+    </div>
+  </div>
+</section>
+
+<!-- ============ CTA ============ -->
+<section class="cta-section">
+  <div class="container">
+    <div class="cta">
+      <div class="glow g3" aria-hidden="true"></div>
+      <h2>Prêt à reprendre le contrôle de votre stock ?</h2>
+      <p>Connectez-vous et découvrez votre tableau de bord en temps réel.</p>
+      <a [routerLink]="auth.isAuthenticated() ? '/app' : '/login'" class="btn btn-lg btn-white">
+        Accéder à SmartStock <app-icon name="arrow-right" />
+      </a>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container footer-inner">
+    <div class="brand light">
+      <span class="logo"><img src="favicon.svg" alt="" width="30" height="30"></span>
+      <span>Smart<b>Stock</b></span>
+    </div>
+    <p>© {{ year }} SmartStock — une solution AzWebSolution.</p>
+    <nav>
+      <a href="#features">Fonctionnalités</a>
+      <a href="#faq">FAQ</a>
+      <a routerLink="/login">Connexion</a>
+    </nav>
+  </div>
+</footer>

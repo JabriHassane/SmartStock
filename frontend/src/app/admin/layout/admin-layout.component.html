@@ -1,0 +1,105 @@
+<div class="shell" [class.collapsed]="collapsed()">
+  <!-- ============ Barre latérale ============ -->
+  <aside class="sidebar" [class.open]="mobileOpen()">
+    <div class="side-head">
+      <a routerLink="/app" class="brand" title="SmartStock">
+        <img src="favicon.svg" alt="" width="34" height="34">
+        <span class="brand-text">Smart<b>Stock</b></span>
+      </a>
+      <button class="btn btn-ghost btn-icon close-mobile" (click)="mobileOpen.set(false)" aria-label="Fermer le menu">
+        <app-icon name="x" />
+      </button>
+    </div>
+
+    <button class="search-btn" (click)="palette.set(true)" title="Recherche rapide">
+      <app-icon name="search" />
+      <span class="nav-text">Rechercher…</span>
+      <kbd class="nav-text">{{ isMac ? '⌘' : 'Ctrl' }} K</kbd>
+    </button>
+
+    <nav class="side-nav">
+      @for (section of sections(); track section.title) {
+        <div class="section-title">{{ section.title }}</div>
+        @for (item of section.items; track item.link) {
+          <a [routerLink]="item.link" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: !!item.exact }" class="nav-link" [attr.title]="collapsed() ? item.label : null">
+            <app-icon [name]="item.icon" />
+            <span class="nav-text">{{ item.label }}</span>
+            @if (item.link === '/app/alerts' && alertCount() > 0) {
+              <span class="count">{{ alertCount() }}</span>
+            }
+          </a>
+        }
+      }
+    </nav>
+
+    <div class="side-foot">
+      <div class="upgrade nav-text">
+        <app-icon name="sparkles" />
+        <div>
+          <b>Prévisions actives</b>
+          <small>Vélocité calculée sur 30 jours</small>
+        </div>
+      </div>
+      <button class="nav-link collapse-btn" (click)="toggleCollapsed()" [attr.aria-label]="collapsed() ? 'Déplier le menu' : 'Replier le menu'">
+        <app-icon [name]="collapsed() ? 'chevron-right' : 'chevron-left'" />
+        <span class="nav-text">Replier le menu</span>
+      </button>
+    </div>
+  </aside>
+  <div class="scrim" [class.show]="mobileOpen()" (click)="mobileOpen.set(false)"></div>
+
+  <!-- ============ Contenu ============ -->
+  <div class="main">
+    <header class="topbar">
+      <button class="btn btn-ghost btn-icon burger" (click)="mobileOpen.set(true)" aria-label="Ouvrir le menu">
+        <app-icon name="menu" />
+      </button>
+
+      <button class="top-search" (click)="palette.set(true)">
+        <app-icon name="search" />
+        <span>Rechercher produits, pages, actions…</span>
+        <kbd>{{ isMac ? '⌘' : 'Ctrl' }} K</kbd>
+      </button>
+
+      <div class="top-actions">
+        <button class="btn btn-ghost btn-icon" (click)="toggleTheme()" [attr.aria-label]="ui.theme() === 'dark' ? 'Thème clair' : 'Thème sombre'" [title]="ui.theme() === 'dark' ? 'Thème clair' : 'Thème sombre'">
+          <app-icon [name]="ui.theme() === 'dark' ? 'sun' : 'moon'" />
+        </button>
+        <a routerLink="/app/alerts" class="btn btn-ghost btn-icon bell" aria-label="Alertes" title="Alertes de stock">
+          <app-icon name="bell" />
+          @if (alertCount() > 0) { <span class="bell-dot">{{ alertCount() > 9 ? '9+' : alertCount() }}</span> }
+        </a>
+
+        <div class="user-menu">
+          <button class="user-btn" (click)="userMenu.set(!userMenu())" aria-haspopup="menu" [attr.aria-expanded]="userMenu()">
+            <span class="avatar">{{ auth.initials() }}</span>
+            <span class="user-info">
+              <b>{{ auth.displayName() }}</b>
+              <small>{{ roleLabel() }}</small>
+            </span>
+            <app-icon name="chevron-down" class="chev" />
+          </button>
+          @if (userMenu()) {
+            <div class="dropdown" role="menu">
+              <div class="dd-head">
+                <b>{{ auth.displayName() }}</b>
+                <small>{{ auth.user()?.email }}</small>
+              </div>
+              <a routerLink="/app/profile" role="menuitem"><app-icon name="user" /> Mon profil</a>
+              <a routerLink="/" role="menuitem"><app-icon name="globe" /> Voir le site</a>
+              <button (click)="logout()" role="menuitem" class="danger"><app-icon name="logout" /> Se déconnecter</button>
+            </div>
+          }
+        </div>
+      </div>
+    </header>
+
+    <main class="content">
+      <router-outlet />
+    </main>
+  </div>
+</div>
+
+@if (palette()) {
+  <app-command-palette (closed)="palette.set(false)" />
+}

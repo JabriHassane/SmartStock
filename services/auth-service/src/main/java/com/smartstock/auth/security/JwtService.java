@@ -35,6 +35,7 @@ public class JwtService {
         return Jwts.builder()
                 .subject(username)
                 .issuer(issuer)
+                .id(java.util.UUID.randomUUID().toString())
                 .issuedAt(now)
                 .expiration(expiry)
                 .claim("roles", roles)
@@ -64,6 +65,8 @@ public class JwtService {
     private Claims parseClaims(String token) {
         return Jwts.parser()
                 .verifyWith(publicKey)
+                .requireIssuer(issuer)
+                .clockSkewSeconds(30)
                 .build()
                 .parseSignedClaims(token)
                 .getPayload();
